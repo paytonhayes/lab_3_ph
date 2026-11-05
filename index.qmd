@@ -1,27 +1,369 @@
 ---
-title: "index"
+title: "Lab 3 - Linear Regression"
 author: "Payton Hayes"
 format: html
 editor: visual
+execute:
+  echo: false
+  warning: false
+  message: false
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
 ```{r}
-1 + 1
+library(carData)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(broom)
+library(performance)
+library(gt)
+
+# 1.3: save attitude data frame as 'dat' and look at only rating, complaints, learning
+#and raise, save number of rows as 'n'
+dat <- attitude |>
+  select(rating, complaints, learning, raises)
+
+n <- nrow(dat)
+
+# 1.4 explore data: head(), str(), summary(), hist() in console
+
+# 1.4: Describe the data
+
+```
+## **Part 1**
+### **Descriptive Statistics for Rating, Complaints, Learning, and Raises**
+```{r}
+
+#A formatted table reporting the mean, standard deviation, minimum, and maximum for each analysis variable
+
+desc_stats <- dat |>
+  summarise(
+    across(
+      everything(),
+      list(
+        Mean = mean,
+        SD = sd,
+        Min = min,
+        Max = max
+      )
+    )
+  ) |>
+  pivot_longer(
+    everything(),
+    names_to = c("variable", ".value"),
+    names_sep = "_"
+  )
+desc_stats |>
+  gt()|>
+  fmt_number(
+    columns = c(Mean, SD, Min, Max),
+    decimals = 2
+  )
 ```
 
-You can add options to executable code like this
-
+### **A Histogram of Workplace Rating, with an Overlaid Density Curve**
 ```{r}
-#| echo: false
-2 * 2
+
+ggplot(dat, aes(x = rating)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 15,
+    fill = "#669BBC",
+    color = "white",
+    alpha = 0.8
+  ) +
+  geom_density(
+    linewidth = 0.9,
+    color = "#9A3038"
+  ) +
+  labs(
+    x = "Occupational workplace rating score",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 12)
+
+
+
+#At least two scatterplots showing relationships between rating and predictors, with fitted regression lines.
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+### **Relationship Between Workplace Rating and Complaints**
+
+```{r}
+ggplot(dat, aes(x = complaints, y = rating)) +
+  geom_point(alpha = 0.75) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    color = "#27638A"
+  ) +
+  labs(
+    x = "Handling of employee complaints",
+    y = "Overall workplace rating"
+  ) +
+  theme_minimal(base_size = 12)
+
+```
+
+### **Relationship Between Workplace Rating and Raises**
+
+```{r}
+ggplot(dat, aes(x = raises, y = rating)) +
+  geom_point(alpha = 0.75) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    color = "#27638A"
+  ) +
+  labs(
+    x = "Pay increases",
+    y = "Overall workplace rating"
+  ) +
+  theme_minimal(base_size = 12)
+
+
+#A short paragraph describing the most important patterns you observe.
+
+```
+The average overall workplace rating across departments was 64.63. According to the scatter-plots, there is a positive relationship between overall workplace rating and both predictive factors of raises and handling of complaints. However, workplace ratings scores and handling of complaints demonstrates a stronger correlation. There is moderate scatter around the regression line for workplace ratings and raises, suggesting a weaker correlation. I would have expected the opposite to be true, because I think a lot of people feel like they "don't get paid enough for this".
+
+## **Part 2** 
+
+### **Developing Predictions**
+
+Handling of workplace complaints may be associated with workplace ratings because if people are more likely to be heard about their concerns, they may feel more satisfied with the quality of management and the workplace overall.
+
+I think that opportunities for learning could potentially explain additional variation beyond complaint handling because if you feel like you can 'move up' in the company and advance your skills with them, you might have a better outlook on the workplace as a whole.
+
+Still I think pay increases could explain further variation after accounting for complaints and learning because if employees feel like they aren't getting compensated enough for their time and worth, they may become unsatisfied in their career.
+
+
+```{r}
+# 2.2 Specify four nested models
+
+# Intercept-only model
+mod0 <- lm(rating ~ 1, data = dat)
+
+# Education model
+mod1 <- lm(rating ~ complaints, data = dat)
+
+
+# Education + income model
+mod2 <- lm(rating ~ complaints + learning, data = dat)
+
+
+# Expanded model
+mod3 <- lm(rating ~ complaints + learning + raises, data = dat)
+
+```
+
+### **Interpretation of the complaints coefficient changes between M1, M2, and M3**
+
+Complaints coefficient M1: 0.75461
+Complaints coefficient M2: 0.6435 
+Complaints coefficient M3: 0.65349
+
+The complaints coefficient for M1 through M3 suggest that complaint handling remains a positive, and fairly strong predictor of workplace rating, even when controlling for predictors like learning and raises. All three complaint coefficients were statistically significant, even though there was a dip between m1 and m2 
+
+## **Part 3**
+```{r}
+#Use anova() to compare all four models in a single call, in the order M0, M1, M2, M3
+ftests <- anova(mod0, mod1, mod2, mod3)
+
+ftests.final <- ftests |>
+ select(Res.Df, Df, F, `Pr(>F)`) |>
+  rename(
+    Residual.df = Res.Df,
+    Nested.Df = Df,
+    Nested.F.stat = F,
+    Nested.p.value = `Pr(>F)`
+  )
+```
+
+### **3.2 - 3.5 Model Performance **
+
+```{r}
+glances <- bind_rows(
+  "M0: Null" = glance(mod0),
+  "M1: Complaints" = glance(mod1),
+  "M2: Complaints + Learning" = glance(mod2),
+  "M3: Expanded" = glance(mod3),
+  .id = "Model"
+)
+
+comparison_table <- cbind(
+  glances,
+  ftests.final
+)
+
+#3.3. Calculate changes in explained variance
+#Calculate the change in R² between successive models
+
+comparison_table <- comparison_table |>
+  mutate(
+    Delta.R2 = r.squared - lag(r.squared),
+    
+    RMSE = c(
+      sqrt(mean(residuals(mod0)^2)),
+      sqrt(mean(residuals(mod1)^2)),
+      sqrt(mean(residuals(mod2)^2)),
+      sqrt(mean(residuals(mod3)^2))
+    )
+  ) 
+comparison_table <- comparison_table |>
+  select(
+    Model,
+    r.squared,
+    adj.r.squared,
+    RMSE,
+    Delta.R2,
+    Residual.df,
+    Nested.Df,
+    Nested.F.stat,
+    Nested.p.value
+  )
+
+#3.4 Combine the model-performance statistics with the nested-model test results
+
+comparison_table |>
+  gt() |>
+  cols_label(
+    Model = "Model",
+    r.squared = "R²",
+    adj.r.squared = "Adjusted R²",
+    RMSE = "RMSE",
+    Delta.R2 = "ΔR²",
+    Residual.df = "Residual df",
+    Nested.Df = "Nested df",
+    Nested.F.stat = "Nested F",
+    Nested.p.value = "Nested p"
+  )|>
+tab_style(
+  style = cell_fill(color = "#E6F2FF"),
+  locations = cells_column_labels(
+    columns = c(r.squared, adj.r.squared, RMSE)
+  ))|>
+  fmt_number(
+    columns = c(
+      r.squared,
+      adj.r.squared,
+      RMSE,
+      Delta.R2,
+      Nested.F.stat
+    ),
+    decimals = 3
+  ) |>
+  fmt(
+    columns = Nested.p.value,
+    fns = function(x) {
+      ifelse(
+        is.na(x),
+        "—",
+        ifelse(x < .001, "< .001", sprintf("%.3f", x))
+      )
+    }
+  ) |>
+  sub_missing(
+    columns = c(Delta.R2, Nested.Df, Nested.F.stat),
+    missing_text = "—"
+  )
+#compare model performance
+performance_comparison <- compare_performance(
+  mod0,
+  mod1,
+  mod2,
+  mod3,
+  rank = TRUE
+)
+
+```
+### **Model Performance Interpretations**
+
+
+Model 2 and Model 3 both explained 70.8% percent of the variance in rating scores (R^2^ =  0.708). This means that adding learning onto complaints helped improve performance, to the same extent that adding both learning and raises to complaints did. However, M3's adjusted R^2^ drops to 0.675, compared to M2 of R^2^ = 0.686. So, when we add raises onto the complaints and learning the model, it is actually just complicating it and not adding much explanatory value. M1 explains 68.1 percent of the variance, M2 adds an additional 2.7% explanatory value, and M3 does not add any addition explanation in variance compared to M2. The M1 complaints model adds a statistically significant improvement in fit compared to the null.The largest reduction in RMSE, was between M0 and M1 complaints (from 11.968 to 6.756 rating points, respectively). However the reduction in rating errors did not seem to decrease substantially from M1 to M2 and M3 (RMSE of M1 being 6.756, to 6.467 for M2, and finally 6.464 for M3). Taken together, the table suggests that complaints is the predictor that provides the most explanatory value for this data set.
+
+## **Part 4** 
+
+### **M1 Diagnostic Findings**
+```{r}
+
+plot(mod1)
+
+```
+
+There seems to be no systematic patterns or curves for the residual fitted values, supporting the assumption of linearity. The residuals do not seem to deviate dramatically from the normal distribution, however there is a slight spread that occurs at the tail ends. The Scale–location plot has a slight bump to it, suggesting that the assumption of homoscedasticity may not be fully satisfied. There are three points that appear to have more leverage compared to the others in the Residuals vs Leverage plot. Multicollinearity cannot be tested because there is only one predictive variable. I would say that the model has predictive value considering the assumptions of linearity and normality appear to be met. However, results should be interpreted with caution considering the potential violation of homoscedasticity. 
+
+
+### **M2 Diagnostic Findings**
+```{r}
+
+plot(mod2)
+
+```
+
+For the residuals versus fitted values, there seems to be no systematic patterns or curves, supporting the assumption of linearity. The residuals do not seem to deviate dramatically from the normal distribution, however there is a slight spread that occurs at the tail ends. The Scale–location plot has a moderate curve to it, suggesting that the assumption of homoscedasticity may not be fully satisfied. There are three to four points that appear to have substantial leverage compared to the others in the Residuals vs Leverage plot. VIF values for both complaints and learning were 1.55, suggesting that the were not so closely related that we cannot see their unique contributions in the model. I would not say that the model is useless, considering the assumptions of linearity, normality, and multicollinearity appear to be met. However, results should be interpreted with caution considering the potential violation of homoscedasticity. 
+
+## **Part 5: Preferred Model**
+
+I believe that, taken together, M2 slightly outperforms M1. They both explain the same amount of variance in rating scores, however M2's adjusted variance is slightly higher. M2 has a slightly lower RMSE, meaning that M2's typical error size is just a bit smaller. Although M2's second factor of learning does not add a lot of predictive value, it only uses two predictive degrees of freedom. The diagnostic tests for the two models appear roughly equal. So, given M2's adjusted R^2^ and RMSE, I would pick it over M1. 
+
+
+### **5.2. Coefficient table**
+```{r}
+
+coef_table <- tidy(
+  mod2,
+  conf.int = TRUE,
+  conf.level = 0.95
+)
+
+coef_table |>
+  select(
+    term,
+    estimate,
+    std.error,
+    conf.low,
+    conf.high,
+    p.value
+  ) |>
+  gt() |>
+  cols_label(
+    term = "Predictor",
+    estimate = "Estimate",
+    std.error = "SE",
+    conf.low = "95% CI lower",
+    conf.high = "95% CI upper",
+    p.value = "p"
+  ) |>
+  fmt_number(
+    columns = c(
+      estimate,
+      std.error,
+      conf.low,
+      conf.high
+    ),
+    decimals = 3
+  ) |>
+  fmt(
+    columns = p.value,
+    fns = function(x) {
+      ifelse(
+        x < .001,
+        "< .001",
+        sprintf("%.3f", x)
+      )
+    }
+  )
+```
+
+
+The complaints predictor coefficient was `r round(coef_table |> filter(term == "complaints") |> pull(estimate), 3)`. The learning predictor coefficient was `r round(coef_table |> filter(term == "learning") |> pull(estimate), 3)`. Both of the predictor coefficients were positive, with complaints being the stronger of the two predictors. When learning is held constant, a one unit increase in the complaints score is associated with a `r round(coef_table |> filter(term == "complaints") |> pull(estimate), 3)` increase in work rating score. When complaints are held constant, a one unit increase in the learning is associated with a `r round(coef_table |> filter(term == "learning") |> pull(estimate), 3)` increase in work rating score. The complaints coefficient has a 95% confidence interval of `r round(coef_table |> filter(term == "complaints") |> pull(conf.low), 3)` and `r round(coef_table |> filter(term == "complaints") |> pull(conf.high), 3)`. The confidence interval does not include zero, indicating that it is statistically significant that complaints is positively related to workplace ratings. For the learning coefficient, it has a 95% confidence interval of `r round(coef_table |> filter(term == "learning") |> pull(conf.low), 3)` and `r round(coef_table |> filter(term == "learning") |> pull(conf.high), 3)`. The confidence interval for learning does include zero, there is not significant evidence that learning is independently related to workplace rating when you control for complaints.
+
+### **5.4 Model Performance Summary**
+
+Model 2 had an R^2^ value of `r round(performance_comparison |> filter(Name == "mod2") |> pull(R2), 3)`, an adjusted R^2^ value of `r round(performance_comparison |> filter(Name == "mod2") |> pull(R2_adjusted), 3)`, and an RMSE of `r round(performance_comparison |> filter(Name == "mod2") |> pull(RMSE), 3)`. This means that complaints and learning explained `r round(performance_comparison |> filter(Name == "mod2") |> pull(R2) *100, 1)`% of the variation in workplace ratings. After accounting for adding another variable into the mix (learning) in addition to just complaints, the model explained `r round(performance_comparison |> filter(Name == "mod2") |> pull(R2_adjusted) *100, 1)`% of the variation in workplace ratings. Model 2's RMSE implies that the predictive workplace rating score will be different to the actual observed workplace rating by an average of `r round(performance_comparison |> filter(Name == "mod2") |> pull(RMSE), 2)` points.
+
+## **Part 6: Findings and Limitations**
+
+Taken together, the models show that complaints are the biggest predictor of workplace rating scores. Learning added a small amount of predictive value for workplace rating, but it was not statistically significant. Lastly, pay raises provided very little in terms of additional independent explanatory value to workplace ratings. The diagnostic tests highlighted that for both model 1 and model 2, the assumption of homoscedasticity may not have been fully satisfied, and therefore the p values should be interpreted cautiously.  
+
